@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 function App() {
   // 1. Criando os Estados
@@ -6,6 +7,7 @@ function App() {
   const [carregando, setCarregando] = useState(false);
   const [resultados, setResultados] = useState([]);
   const [erro, setErro] = useState("");
+  const [resumoIA, setResumoIA] = useState("");
 
   // 2. Função para lidar com o clique do botão
   const handleVerificar = async () => {
@@ -14,19 +16,24 @@ function App() {
       return;
     }
 
-    const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
-    if (!apiKey) {
-      alert("Aviso: Chave de API não configurada no .env.local!");
+    const googleApiKey = import.meta.env.VITE_GOOGLE_API_KEY;
+    const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY;
+
+    if (!googleApiKey || !geminiApiKey) {
+      alert("Aviso: As chaves de API não estão configuradas no .env.local!");
       return;
     }
 
     setCarregando(true);
+    setErro("");
+    setResultados([]);
+    setResumoIA("");
 
     try {
       setErro("");
       setResultados([]);
       // encodeURIComponent garante que espaços e acentos não quebrem o link
-      const url = `https://factchecktools.googleapis.com/v1alpha1/claims:search?query=${encodeURIComponent(textoNoticia)}&key=${apiKey}`;
+      const url = `https://factchecktools.googleapis.com/v1alpha1/claims:search?query=${encodeURIComponent(textoNoticia)}&key=${googleApiKey}`;
 
       // O 'await' faz o código esperar a resposta do Google chegar
       const resposta = await fetch(url);
@@ -34,8 +41,33 @@ function App() {
       // Converte a resposta para um objeto JavaScript (JSON)
       const dados = await resposta.json();
 
-      if (dados.claims) {
+      if (dados.claims && dados.claims.length > 0) {
         setResultados(dados.claims);
+        try {
+          // Inicializa o SDK do Gemini
+          const genAI = new GoogleGenerativeAI(geminiApiKey);
+          const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+          const prompt = `
+            Você é um jornalista especializado em checagem de fatos, escrevendo para o público em geral.
+            O usuário pesquisou pela frase: "${textoNoticia}".
+            A API retornou as seguintes checagens: ${JSON.stringify(dados.claims)}.
+            
+            Sua tarefa: Escreva um único parágrafo muito conciso (máximo de 3 a 4 linhas) dando o veredito final.
+            
+            REGRAS ABSOLUTAS:
+            1. NÃO faça listas e NÃO repita os detalhes técnicos de cada agência de checagem.
+            2. Vá direto ao ponto. Avalie a essência do que o usuário pesquisou com base nos dados.
+            3. Se a pesquisa do usuário for um fato amplamente verdadeiro e comprovado (como "vacinas salvam vidas", "a terra é redonda"), e os dados da API apenas mostrarem fake news absurdas sendo desmentidas sobre o tema, escreva EXATAMENTE nesta linha: "Esta afirmação é verdadeira e um consenso. As agências de checagem listadas abaixo apenas registraram e desmentiram boatos e peças de desinformação que tentavam atacar esse fato."
+          `;
+
+          // Dispara a pergunta para o Gemini e aguarda a resposta
+          const resultadoIA = await model.generateContent(prompt);
+          setResumoIA(resultadoIA.response.text());
+        } catch (erroIA) {
+          console.error("ERRO DETALHADO DA IA:", erroIA); // Isso vai imprimir o erro completo no console do navegador
+          setResumoIA("Erro na IA: " + (erroIA.message || "Erro desconhecido"));
+        }
       } else {
         setErro("Nenhuma checagem de fatos encontrada para este termo.");
       }
@@ -85,6 +117,17 @@ function App() {
           {erro && (
             <div className="bg-red-100 text-red-700 p-4 rounded-lg mb-4 text-center font-medium">
               {erro}
+            </div>
+          )}
+          {/* RENDERIZA O RESUMO DA IA --> */}
+          {resumoIA && (
+            <div className="bg-purple-50 border border-purple-200 rounded-xl p-5 mb-6 shadow-sm">
+              <h2 className="text-purple-800 font-bold mb-2 flex items-center text-lg">
+                ✨ Análise Inteligente
+              </h2>
+              <p className="text-purple-900 leading-relaxed whitespace-pre-wrap">
+                {resumoIA}
+              </p>
             </div>
           )}
 
